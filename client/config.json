@@ -1,0 +1,10 @@
+{
+    "mcpServers": {
+        "calculator": {
+            "command": "python",
+            "args": [
+                "servers/calculator/server.py"
+            ]
+        }
+    }
+}

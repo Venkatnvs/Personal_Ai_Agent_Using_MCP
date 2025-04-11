@@ -1,0 +1,8 @@
+mcp[cli]
+python-dotenv
+google-genai
+langchain
+langchain-mcp-adapters
+langchain-google-genai
+google-generativeai
+langgraph
