@@ -4,6 +4,7 @@ import sys
 import json
 import logging
 from contextlib import AsyncExitStack
+from typing import List, Dict, Any
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
@@ -11,9 +12,9 @@ from mcp.client.stdio import stdio_client
 from langchain_mcp_adapters.tools import load_mcp_tools
 from langgraph.prebuilt import create_react_agent
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langgraph.checkpoint.memory import MemorySaver
-
-memory = MemorySaver()
+from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
+from langchain_core.chat_history import BaseChatMessageHistory
+from langchain_core.runnables.history import RunnableWithMessageHistory
 
 from dotenv import load_dotenv
 
@@ -28,39 +29,44 @@ logger = logging.getLogger("mcp_client")
 load_dotenv()
 logger.info("Environment variables loaded from .env file")
 
-system_prompt = """
-You are an intelligent, resourceful, and efficient AI assistant with access to a comprehensive set of tools.
-And always prefer not to ask questions to the user unless necessary.
-Your primary goal is to provide accurate, up-to-date, and helpful responses while maintaining a friendly and professional tone. 
-Follow these guidelines:
-1. Tool Usage Priority:
-   - Always use tools for real-time data, calculations, and external actions
-   - Only use internal knowledge for general facts that don't require current data
-   - When in doubt, prefer using tools over assumptions
-2. Response Format:
-   - Keep responses concise (100-200 words)
-   - Present information in a clear, structured manner
-   - Include relevant context and sources when using tools
-3. Tool Selection Guidelines:
-   - Browser Tool: For browsing the web and doing actions on the web.(Use this tool when browser is required to be opened)
-   - Web Search: Primary tool for general information and current topics (Give as much information as possible in the response)
-   - Wikipedia: For historical and general knowledge
-   - Date/Time: For temporal information and always use Asia/Kolkata timezone unless otherwise specified
-4. Best Practices:
-   - Don't ask users to repeat information
-   - Handle errors gracefully and provide alternatives
-   - Use appropriate tools for the task at hand
-   - Maintain user privacy and security
-   - Default to @gmail.com for email addresses
-   - Always verify information from multiple sources when critical
-   - Use web_content tool after web searches for detailed information
-5. After receiving a tool's response:
-   - Transform the raw data into a natural, conversational response
-   - Keep responses concise but informative
-   - Focus on the most relevant information
-   - Use appropriate context from the user's question
-   - Avoid simply repeating the raw data
+# Default system prompt
+DEFAULT_SYSTEM_PROMPT = """You are a helpful AI assistant with access to various tools.
+Your goal is to provide accurate, helpful responses to user queries by using these tools appropriately.
+Always approach questions step-by-step and use the most relevant tools when needed.
+If you're not sure about something, be honest about your limitations.
+Always use this D://Python//2025//Personal_Ai_Agent//workspace as the root directory for all file operations.
 """
+
+class InMemoryHistory(BaseChatMessageHistory):
+    """Simple in-memory implementation of chat message history."""
+    
+    def __init__(self):
+        self._messages = []
+    
+    def add_message(self, message):
+        self._messages.append(message)
+    
+    def clear(self):
+        self._messages = []
+
+    @property
+    def messages(self) -> List[Any]:
+        return self._messages
+        
+    @messages.setter
+    def messages(self, messages: List[Any]):
+        self._messages = messages
+
+class MessageHistoryStore:
+    """Store for managing conversation histories."""
+    
+    def __init__(self):
+        self.histories: Dict[str, InMemoryHistory] = {}
+    
+    def get_session_history(self, session_id: str):
+        if session_id not in self.histories:
+            self.histories[session_id] = InMemoryHistory()
+        return self.histories[session_id]
 
 class CustomEncoder(json.JSONEncoder):
     def default(self, o):
@@ -86,6 +92,29 @@ def read_config_json():
         logger.error(f"Failed to read config file at '{config_path}': {e}")
         sys.exit(1)
 
+def format_string_with_env(text):
+    """
+    Replace environment variable placeholders in a string.
+    Example: "Hello, ${{NAME}}" -> "Hello, John"
+    """
+    if not isinstance(text, str):
+        return text
+        
+    result = text
+    # Find all instances of ${{ENV_VAR}}
+    import re
+    matches = re.findall(r'\$\{\{(\w+)\}\}', text)
+    
+    for env_var_name in matches:
+        env_var_value = os.getenv(env_var_name, "")
+        result = result.replace(f"${{{{{env_var_name}}}}}", env_var_value)
+        if env_var_value:
+            logger.info(f"Replaced ${{{{{env_var_name}}}}} with its environment value")
+        else:
+            logger.warning(f"Environment variable {env_var_name} not found")
+            
+    return result
+
 def format_env(env):
     """
     Process environment variables in the configuration.
@@ -105,7 +134,8 @@ def format_env(env):
             else:
                 processed_env[key] = env_var_value
                 logger.info(f"Environment variable {env_var_name} successfully mapped to {key}")
-    print(processed_env, "processed_env")
+    
+    logger.debug(f"Processed environment variables: {processed_env}")
     return processed_env
 
 async def run_agent():
@@ -116,6 +146,12 @@ async def run_agent():
         return
 
     tools = []
+    
+    # Get system prompt from config or use default
+    system_prompt = config.get("systemPrompt", DEFAULT_SYSTEM_PROMPT)
+    # Replace any environment variables in the system prompt
+    system_prompt = format_string_with_env(system_prompt)
+    logger.info("System prompt loaded and processed")
 
     # Initialize LLM
     try:
@@ -172,35 +208,76 @@ async def run_agent():
         if not tools:
             logger.error("No tools loaded from any server. Exiting.")
             return
-        agent = create_react_agent(llm, tools, prompt=system_prompt, checkpointer=memory)    
-        logger.info("Agent created successfully with all tools")
+
+        # Create the base agent
+        base_agent = create_react_agent(llm, tools)
+        logger.info("Base agent created successfully with all tools")
+        
+        # Set up message history store
+        message_history_store = MessageHistoryStore()
+        session_id = "main"  # Default session ID
+        
+        # Wrap the agent with message history
+        agent_with_memory = RunnableWithMessageHistory(
+            base_agent,
+            lambda session_id: message_history_store.get_session_history(session_id),
+            input_messages_key="messages",
+            history_messages_key="chat_history",
+        )
+        
+        logger.info("Agent wrapped with memory functionality")
 
         print("\n🚀 MCP Client Ready! Type 'quit' to exit.")
+        chat_history = []  # Initialize empty chat history
+        
         while True:
             query = input("\nQuery: ").strip()
             if query.lower() == "quit":
                 break
+            
+            if query.lower() == "clear memory":
+                chat_history = []
+                message_history_store.get_session_history(session_id).clear()
+                print("Memory cleared!")
+                continue
 
             try:
                 logger.info(f"Processing query: {query}")
-                try:
-                    if len(memory.blobs) > 20:
-                        for i in range(5):
-                            memory.blobs.pop(0)
-                except Exception as e:
-                    logger.error(f"Error processing query: {e}", exc_info=True)
-                    print(f"Error: {e}")
-                response = await agent.ainvoke({"messages": query}, {"configurable": {"thread_id": "1"}, "recursion_limit": 100})
-
-                print("\nAgent Call Response:")
-                try:
-                    formatted = json.dumps(response, indent=2, cls=CustomEncoder)
-                    print(formatted)
-                    
-                    print("\nResponse: ", response["messages"][-1].content if response.get("messages") else "No response")
-                except Exception as e:
-                    logger.error(f"Failed to format response: {e}")
-                    print(str(response))
+                
+                # Prepare input with system prompt and history
+                input_data = {
+                    "messages": [
+                        SystemMessage(content=system_prompt),
+                        HumanMessage(content=query)
+                    ],
+                    "chat_history": chat_history
+                }
+                
+                # Invoke agent with memory
+                response = await agent_with_memory.ainvoke(
+                    input_data, 
+                    config={"configurable": {"session_id": session_id}}
+                )
+                
+                # Extract the response content for display
+                ai_response = response["messages"][-1].content if response.get("messages") else "No response"
+                
+                # Update our tracking of chat history
+                chat_history.append(HumanMessage(content=query))
+                chat_history.append(AIMessage(content=ai_response))
+                
+                print("\nResponse:")
+                print(ai_response)
+                
+                # Optionally print full response details for debugging
+                if os.getenv("DEBUG") == "true":
+                    try:
+                        formatted = json.dumps(response, indent=2, cls=CustomEncoder)
+                        print("\nDebug - Full response:")
+                        print(formatted)
+                    except Exception as e:
+                        logger.error(f"Failed to format response: {e}")
+                        
             except Exception as e:
                 logger.error(f"Error processing query: {e}", exc_info=True)
                 print(f"Error: {e}")

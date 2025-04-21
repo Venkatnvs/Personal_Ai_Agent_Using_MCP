@@ -6,3 +6,11 @@ langchain-mcp-adapters
 langchain-google-genai
 google-generativeai
 langgraph
+pytz
+requests
+pint
+python-pptx
+pywin32
+pillow
+wikipedia
+beautifulsoup4

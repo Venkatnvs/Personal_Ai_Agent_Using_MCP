@@ -5,6 +5,85 @@
             "args": [
                 "servers/calculator/server.py"
             ]
+        },
+        "date_tool": {
+            "command": "python",
+            "args": [
+                "servers/date_tool/server.py"
+            ]
+        },
+        "weather": {
+            "command": "python",
+            "args": [
+                "servers/weather/server.py"
+            ],
+            "env": {
+                "OPENWEATHERMAP_API_KEY": "${{OPENWEATHERMAP_API_KEY}}"
+            }
+        },
+        "email": {
+            "command": "python",
+            "args": [
+                "servers/email/server.py"
+            ],
+            "env": {
+                "SMTP_SERVER": "${{SMTP_SERVER}}",
+                "SMTP_PORT": "${{SMTP_PORT}}",
+                "SMTP_USERNAME": "${{SMTP_USERNAME}}",
+                "SMTP_PASSWORD": "${{SMTP_PASSWORD}}"
+            }
+        },
+        "unit_conversion_tool": {
+            "command": "python",
+            "args": [
+                "servers/unit_conversion_tool/server.py"
+            ],
+            "env": {
+                "EXCHANGERATE_API_KEY": "${{EXCHANGERATE_API_KEY}}"
+            }
+        },
+        "unsplash-mcp-server": {
+            "command": "python",
+            "args": [
+                "servers/unsplash-mcp-server/server.py"
+            ],
+            "env": {
+                "UNSPLASH_ACCESS_KEY": "${{UNSPLASH_ACCESS_KEY}}"
+            }
+        },
+        "PPT_MCP_Server": {
+            "command": "python",
+            "args": [
+                "servers/PPT_MCP_Server/server.py"
+            ]
+        },
+        "web_search": {
+            "command": "python",
+            "args": [
+                "servers/web_search/server.py"
+            ]
+        },
+        "wikipedia": {
+            "command": "python",
+            "args": [
+                "servers/wikipedia/server.py"
+            ]
+        },
+        "playwright": {
+            "command": "npx",
+            "args": [
+                "@playwright/mcp@latest"
+            ]
+        },
+        "vapi-mcp-server": {
+            "command": "npx",
+            "args": [
+                "-y",
+                "@vapi-ai/mcp-server"
+            ],
+            "env": {
+                "VAPI_TOKEN": "${{VAPI_TOKEN}}"
+            }
         }
     }
 }
